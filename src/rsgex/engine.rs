@@ -18,11 +18,3 @@ impl Engine {
         Ok(Engine { nfa_builder: nfa })
     }
 }
-
-// fn regex_to_nfa(ast: Hir) {
-//     match ast.kind() {
-//         HirKind::Alternation(alternatives) => {},
-//         HirKind::Concat
-//         _ => (),
-//     }
-// }
