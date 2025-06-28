@@ -1,4 +1,4 @@
-use regex_syntax::hir::{Hir, HirKind, Literal};
+use regex_syntax::hir::{Hir, HirKind, Literal, Repetition};
 
 use super::nfa::NFAutomata;
 
@@ -8,6 +8,7 @@ pub struct Engine {
 }
 
 impl Engine {
+    // FIXME: fn one_step should be private
     pub fn one_step(&mut self, char_or_epsilon: Option<char>) {
         let mut nfa = NFAutomata::new();
 
@@ -110,12 +111,21 @@ impl Engine {
         self.nfa = nfa;
     }
 
+    /// TODO:
+    /// min - max: 重复添加相同的 sub_nfa 到 Engine
+    ///     在 min ~ max 之间的 sub_nfa 可以直接从 sub_nfa ending 流转到 Repetition sub_nfa ending
+    /// +/*: 添加一个到两个 sub_nfa 然后支持原地 loop
+    fn repetition(&mut self, _repetition: &Repetition) {
+        todo!()
+    }
+
     pub fn ast_to_nfa(ast: &HirKind) -> Self {
         let mut builder = Self::default();
         match ast {
             HirKind::Alternation(ast_vec) => builder.alternation(ast_vec.as_slice()),
             HirKind::Concat(ast_vec) => builder.concat(ast_vec.as_slice()),
             HirKind::Literal(literal) => builder.literal(literal),
+            HirKind::Repetition(repetition) => builder.repetition(repetition),
             _ => (),
         }
 
