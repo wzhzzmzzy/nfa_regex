@@ -1,14 +1,21 @@
-use super::parser::parse_by_regex_syntax;
+use super::{nfa_builder::NFAutomataBuilder, parser::parse_by_regex_syntax};
 use anyhow::Result;
-use regex_syntax::hir::{Hir, HirKind};
 
-pub struct Engine {}
+pub struct Engine {
+    nfa_builder: NFAutomataBuilder,
+}
 
 impl Engine {
+    pub fn compute(&self, input: &str) -> bool {
+        self.nfa_builder.nfa.compute(input)
+    }
+
     pub fn new(pattern: &str) -> Result<Self> {
         let ast = parse_by_regex_syntax(pattern)?;
 
-        Ok(Engine {})
+        let nfa = NFAutomataBuilder::ast_to_nfa(ast.kind());
+
+        Ok(Engine { nfa_builder: nfa })
     }
 }
 

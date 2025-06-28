@@ -4,14 +4,10 @@ use super::nfa::NFAutomata;
 
 #[derive(Default)]
 pub struct NFAutomataBuilder {
-    nfa: Option<NFAutomata>,
+    pub nfa: NFAutomata,
 }
 
 impl NFAutomataBuilder {
-    pub fn nfa(self) -> NFAutomata {
-        self.nfa.unwrap()
-    }
-
     pub fn one_step(&mut self, char_or_epsilon: Option<char>) {
         let mut nfa = NFAutomata::new();
 
@@ -23,20 +19,15 @@ impl NFAutomataBuilder {
             nfa.add_epsilon_transition(0, 1);
         }
 
-        self.nfa = Some(nfa);
+        self.nfa = nfa;
     }
 
     fn append(&mut self, other_nfa: NFAutomata, union_state: usize) {
-        if self.nfa.is_none() {
-            self.nfa = Some(other_nfa);
-            return;
-        }
-
         if other_nfa.states.len() < 2 {
             return;
         }
 
-        let mut origin_nfa = self.nfa.clone().unwrap();
+        let mut origin_nfa = self.nfa.clone();
         let origin_len = origin_nfa.states.len();
 
         origin_nfa.fill_state(other_nfa.states.len() - 1);
@@ -59,7 +50,7 @@ impl NFAutomataBuilder {
                 });
             });
 
-        self.nfa = Some(origin_nfa);
+        self.nfa = origin_nfa;
     }
 
     fn alternation(&mut self, ast_vec: &[Hir]) {
@@ -70,7 +61,7 @@ impl NFAutomataBuilder {
 
         ast_vec.iter().for_each(|ast| {
             let sub_nfa = NFAutomataBuilder::ast_to_nfa(ast.kind());
-            self.append(sub_nfa.nfa(), 0);
+            self.append(sub_nfa.nfa, 0);
         });
 
         nfa.fill_state(1);
@@ -83,7 +74,7 @@ impl NFAutomataBuilder {
             nfa.remove_ending(from);
         }
 
-        self.nfa = Some(nfa);
+        self.nfa = nfa;
     }
 
     fn concat(&mut self, ast_vec: &[Hir]) {
@@ -96,10 +87,10 @@ impl NFAutomataBuilder {
         ast_vec.iter().for_each(|ast| {
             let sub_nfa = NFAutomataBuilder::ast_to_nfa(ast.kind());
             let prev_ending = nfa.ending.pop().unwrap();
-            self.append(sub_nfa.nfa(), prev_ending);
+            self.append(sub_nfa.nfa, prev_ending);
         });
 
-        self.nfa = Some(nfa);
+        self.nfa = nfa;
     }
 
     fn literal(&mut self, literal: &Literal) {
@@ -116,7 +107,7 @@ impl NFAutomataBuilder {
                 nfa.add_char_transition(from, from + 1, c);
             });
 
-        self.nfa = Some(nfa);
+        self.nfa = nfa;
     }
 
     pub fn ast_to_nfa(ast: &HirKind) -> Self {
