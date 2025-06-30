@@ -13,6 +13,6 @@ mod test {
 
     #[test]
     fn test_parse_by_regex_syntax() {
-        println!("{:?}", parse_by_regex_syntax("ab*"));
+        println!("{:?}", parse_by_regex_syntax("123(?:12-)?.*"));
     }
 }

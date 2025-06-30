@@ -129,6 +129,75 @@ impl NFAutomata {
     pub fn add_epsilon_transition(&mut self, from: usize, to: usize) {
         self.add_transition(from, to, Rc::new(EpsilonMatcher {}))
     }
+
+    pub fn append(&mut self, other_nfa: &NFAutomata, union_state: usize) {
+        if other_nfa.states.len() < 2 {
+            return;
+        }
+
+        let origin_len = self.states.len();
+
+        self.fill_state(other_nfa.states.len() - 1);
+        self.remove_ending(union_state);
+        other_nfa.ending.iter().for_each(|i| {
+            self.add_ending(i + origin_len - 1);
+        });
+
+        other_nfa
+            .states
+            .iter()
+            .enumerate()
+            .for_each(|(from, state)| {
+                state.matchers.iter().for_each(|(matcher, to)| {
+                    self.add_transition(
+                        if state.is_initial {
+                            union_state
+                        } else {
+                            from + origin_len - 1
+                        },
+                        (*to) + origin_len - 1,
+                        matcher.clone(),
+                    )
+                });
+            });
+    }
+
+    pub fn debug(&self) {
+        println!("NFA Debug Information:");
+        println!("======================");
+
+        for (index, state) in self.states.iter().enumerate() {
+            let mut state_info = format!("State({})", index);
+
+            // 添加标记
+            let mut markers = Vec::new();
+            if state.is_initial {
+                markers.push("INITIAL");
+            }
+            if state.is_ending {
+                markers.push("ENDING");
+            }
+
+            if !markers.is_empty() {
+                state_info.push_str(&format!(" [{}]", markers.join(", ")));
+            }
+
+            // 添加转换关系
+            if state.matchers.is_empty() {
+                println!("{}: (no transitions)", state_info);
+            } else {
+                let transitions: Vec<String> = state
+                    .matchers
+                    .iter()
+                    .map(|(matcher, to_state)| format!("--{}-> {}", matcher.label(), to_state))
+                    .collect();
+
+                println!("{}: {}", state_info, transitions.join(" "));
+            }
+        }
+
+        println!("======================");
+    }
 }
 
 impl Default for NFAutomata {
