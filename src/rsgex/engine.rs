@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use super::{nfa::NFAutomata, parser};
+use super::{matcher::ClassUnicodeMatcher, nfa::NFAutomata, parser};
 use anyhow::Result;
 use regex_syntax::hir::{Capture, Class, Hir, HirKind, Literal, Repetition};
 
@@ -10,21 +10,6 @@ pub struct Engine {
 }
 
 impl Engine {
-    // FIXME: fn one_step should be private
-    pub fn one_step(&mut self, char_or_epsilon: Option<char>) {
-        let mut nfa = NFAutomata::new();
-
-        nfa.declare_state(2, 0, 1);
-
-        if let Some(c) = char_or_epsilon {
-            nfa.add_char_transition(0, 1, c);
-        } else {
-            nfa.add_epsilon_transition(0, 1);
-        }
-
-        self.nfa = nfa;
-    }
-
     fn alternation(&mut self, ast_vec: &[Hir]) {
         let mut nfa = NFAutomata::new();
 
@@ -58,6 +43,7 @@ impl Engine {
         ast_vec.iter().for_each(|ast| {
             let sub_nfa = Self::ast_to_nfa(ast.kind());
             let prev_ending = nfa.ending.pop().unwrap();
+            nfa.remove_ending(prev_ending);
             nfa.append(&sub_nfa.nfa, prev_ending);
         });
 
@@ -89,9 +75,10 @@ impl Engine {
 
         let sub_nfa = Self::ast_to_nfa(repetition.sub.kind());
 
-        let mut last_sub_nfa_initial: usize = 0;
+        let mut last_sub_nfa_initial: usize;
         for _ in 0..repetition.min {
             last_sub_nfa_initial = nfa.ending.pop().unwrap();
+            nfa.remove_ending(last_sub_nfa_initial);
             nfa.append(&sub_nfa.nfa, last_sub_nfa_initial);
         }
 
@@ -99,6 +86,7 @@ impl Engine {
             let mut sub_nfa_ending: Vec<usize> = vec![];
             for _ in repetition.min..max {
                 let current_sub_nfa_ending = nfa.ending.pop().unwrap();
+                nfa.remove_ending(current_sub_nfa_ending);
                 nfa.append(&sub_nfa.nfa, current_sub_nfa_ending);
                 sub_nfa_ending.push(current_sub_nfa_ending);
             }
@@ -106,16 +94,45 @@ impl Engine {
                 nfa.add_epsilon_transition(ending, *nfa.ending.last().unwrap());
             }
         } else {
-            nfa.add_epsilon_transition(*nfa.ending.last().unwrap(), last_sub_nfa_initial);
+            let mut last_ending = nfa.ending.pop().unwrap();
+            nfa.remove_ending(last_ending);
+            last_sub_nfa_initial = last_ending;
+            nfa.append(&sub_nfa.nfa, last_sub_nfa_initial);
+
+            last_ending = nfa.ending.pop().unwrap();
+
+            nfa.fill_state(1);
+            let new_ending = nfa.states.len() - 1;
+            nfa.add_epsilon_transition(last_ending, last_sub_nfa_initial);
+            nfa.add_epsilon_transition(last_ending, new_ending);
+            nfa.add_epsilon_transition(last_sub_nfa_initial, last_ending);
+            nfa.add_ending(new_ending);
         }
 
         self.nfa = nfa;
     }
 
-    /// TODO: Class contains multipul unicode/byte ranges, character matcher will be too weak to
-    /// represent ranges, maybe should support range matcher for Class
-    fn class(&mut self, _class: &Class) {
-        todo!()
+    fn class(&mut self, class: &Class) {
+        let mut nfa = NFAutomata::new();
+        nfa.fill_state(1);
+        nfa.set_initial(0);
+        if let Class::Unicode(unicode_range) = class {
+            unicode_range.iter().enumerate().for_each(|(i, r)| {
+                nfa.fill_state(1);
+                nfa.add_transition(
+                    i,
+                    i + 1,
+                    Rc::new(ClassUnicodeMatcher {
+                        start: r.start(),
+                        end: r.end(),
+                    }),
+                );
+            });
+        }
+
+        nfa.add_ending(nfa.states.len() - 1);
+
+        self.nfa = nfa;
     }
 
     fn capture(&mut self, capture: &Capture) {
@@ -133,9 +150,7 @@ impl Engine {
         let mut builder = Self::default();
         // TODO:
         // Look: ^ / $
-        // Capture: ()
         // Repetition: greedy +? / *? ...
-        // Class: . / [] / [^]
         match ast {
             HirKind::Alternation(ast_vec) => builder.alternation(ast_vec.as_slice()),
             HirKind::Concat(ast_vec) => builder.concat(ast_vec.as_slice()),
@@ -149,6 +164,15 @@ impl Engine {
         println!("ast_to_nfa, {:?}", ast);
 
         builder
+    }
+
+    pub fn exec(&self, s: &str) -> String {
+        self.nfa
+            .compute(s)
+            .unwrap()
+            .get(&0.to_string())
+            .unwrap()
+            .clone()
     }
 }
 
@@ -192,6 +216,15 @@ mod test {
         assert!(e.nfa.compute("1").is_some());
         assert!(e.nfa.compute("11").is_some());
         assert!(e.nfa.compute("111").is_some());
+    }
+
+    #[test]
+    fn test_repetition_0_any() {
+        let e = Engine::try_from("01*").unwrap();
+
+        assert_eq!(e.exec("0"), "0");
+        assert_eq!(e.exec("01"), "01");
+        assert_eq!(e.exec("011"), "011");
     }
 
     #[test]
@@ -243,5 +276,16 @@ mod test {
                 .get(&2.to_string())
                 .map(|s| s.as_str())
         );
+    }
+
+    #[test]
+    fn test_class() {
+        let e = Engine::try_from("[1-9]+").unwrap();
+
+        assert_eq!(e.exec("1"), "1");
+
+        let e = Engine::try_from("[^1-9]").unwrap();
+
+        assert!(e.nfa.compute("0").is_none());
     }
 }

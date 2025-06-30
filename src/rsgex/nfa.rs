@@ -3,6 +3,8 @@ use std::{
     rc::Rc,
 };
 
+use super::matcher::{CharacterMatcher, EpsilonMatcher, Matcher};
+
 #[derive(Clone)]
 pub struct NFAutomata {
     pub states: Vec<State>,
@@ -85,7 +87,7 @@ impl NFAutomata {
                 .iter()
                 .filter(|(m, _)| {
                     if i < input_chars.len() {
-                        m.matches(input_chars[i])
+                        m.matches(&input_chars, i)
                     } else {
                         m.is_epsilon()
                     }
@@ -355,43 +357,6 @@ pub struct State {
     pub is_ending: bool,
     pub start_group: Vec<(u32, Option<Rc<str>>)>,
     pub end_group: Vec<(u32, Option<Rc<str>>)>,
-}
-
-pub trait Matcher {
-    fn matches(&self, c: char) -> bool;
-    fn is_epsilon(&self) -> bool;
-    fn label(&self) -> String;
-}
-
-pub struct CharacterMatcher {
-    c: char,
-}
-impl Matcher for CharacterMatcher {
-    fn matches(&self, c: char) -> bool {
-        self.c == c
-    }
-
-    fn is_epsilon(&self) -> bool {
-        false
-    }
-
-    fn label(&self) -> String {
-        self.c.to_string()
-    }
-}
-pub struct EpsilonMatcher {}
-impl Matcher for EpsilonMatcher {
-    fn matches(&self, _c: char) -> bool {
-        true
-    }
-
-    fn is_epsilon(&self) -> bool {
-        true
-    }
-
-    fn label(&self) -> String {
-        "ε".to_string()
-    }
 }
 
 #[cfg(test)]
