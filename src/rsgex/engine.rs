@@ -1,6 +1,8 @@
+use std::rc::Rc;
+
 use super::{nfa::NFAutomata, parser};
 use anyhow::Result;
-use regex_syntax::hir::{Class, Hir, HirKind, Literal, Repetition};
+use regex_syntax::hir::{Capture, Class, Hir, HirKind, Literal, Repetition};
 
 #[derive(Default)]
 pub struct Engine {
@@ -116,7 +118,18 @@ impl Engine {
         todo!()
     }
 
-    pub fn ast_to_nfa(ast: &HirKind) -> Self {
+    fn capture(&mut self, capture: &Capture) {
+        let mut e = Self::ast_to_nfa(capture.sub.kind());
+
+        e.nfa.mark_capture_group(
+            capture.index,
+            capture.name.as_ref().map(|n| Rc::from(n.clone())),
+        );
+
+        self.nfa = e.nfa;
+    }
+
+    fn ast_to_nfa(ast: &HirKind) -> Self {
         let mut builder = Self::default();
         // TODO:
         // Look: ^ / $
@@ -129,11 +142,11 @@ impl Engine {
             HirKind::Literal(literal) => builder.literal(literal),
             HirKind::Repetition(repetition) => builder.repetition(repetition),
             HirKind::Class(class) => builder.class(class),
+            HirKind::Capture(capture) => builder.capture(capture),
             _ => (),
         }
 
         println!("ast_to_nfa, {:?}", ast);
-        builder.nfa.debug();
 
         builder
     }
@@ -144,7 +157,10 @@ impl TryFrom<&str> for Engine {
 
     fn try_from(pattern: &str) -> Result<Engine, Self::Error> {
         let ast = parser::parse_by_regex_syntax(pattern);
-        let e = Engine::ast_to_nfa(ast?.kind());
+        let mut e = Engine::ast_to_nfa(ast?.kind());
+
+        e.nfa.mark_capture_group(0, None);
+        e.nfa.debug();
 
         Ok(e)
     }
@@ -157,46 +173,63 @@ mod test {
     #[test]
     fn test_literal() {
         let e = Engine::try_from("123").unwrap();
-        assert!(e.nfa.compute("123"));
-        assert!(!e.nfa.compute("124"));
+        assert!(e.nfa.compute("123").is_some());
+        assert!(e.nfa.compute("124").is_none());
     }
 
     #[test]
     fn test_alternation() {
         let e = Engine::try_from("123|456").unwrap();
-        assert!(e.nfa.compute("123"));
-        assert!(e.nfa.compute("456"));
-        assert!(!e.nfa.compute("345"));
+        assert!(e.nfa.compute("123").is_some());
+        assert!(e.nfa.compute("456").is_some());
+        assert!(e.nfa.compute("345").is_none());
     }
 
     #[test]
     fn test_repetition() {
         let e = Engine::try_from("1+").unwrap();
 
-        assert!(e.nfa.compute("1"));
-        assert!(!e.nfa.compute("1"));
-        assert!(e.nfa.compute("11"));
-        assert!(e.nfa.compute("111"));
+        assert!(e.nfa.compute("1").is_some());
+        assert!(e.nfa.compute("11").is_some());
+        assert!(e.nfa.compute("111").is_some());
     }
 
     #[test]
     fn test_repetition_complex() {
         let e = Engine::try_from("1+2+3+4{2}").unwrap();
 
-        assert!(e.nfa.compute("11122233344"));
-        assert!(e.nfa.compute("111222333445"));
-        assert!(!e.nfa.compute("22244"));
-        assert!(!e.nfa.compute("11122233345"));
+        assert!(e.nfa.compute("11122233344").is_some());
+        assert!(e.nfa.compute("111222333445").is_some());
+        assert!(e.nfa.compute("22244").is_none());
+        assert!(e.nfa.compute("11122233345").is_none());
 
         let e2 = Engine::try_from("1234{1,5}").unwrap();
 
-        assert!(e2.nfa.compute("123444455"));
+        assert!(e2.nfa.compute("123444455").is_some());
     }
 
     #[test]
     fn test_accepter() {
         let e = Engine::try_from("123+|456+|7{3}|888").unwrap();
 
-        assert!(e.nfa.compute("888"));
+        assert!(e.nfa.compute("888").is_some());
+    }
+
+    #[test]
+    fn test_capture_group() {
+        let e = Engine::try_from("(?<all>e(a)e)").unwrap();
+
+        let res = e.nfa.compute("eae");
+        assert!(res.is_some());
+
+        assert_eq!(
+            Some("eae"),
+            res.as_ref().unwrap().get(&0).map(|s| s.as_str())
+        );
+        assert_eq!(
+            Some("eae"),
+            res.as_ref().unwrap().get(&1).map(|s| s.as_str())
+        );
+        assert_eq!(Some("a"), res.as_ref().unwrap().get(&2).map(|s| s.as_str()));
     }
 }

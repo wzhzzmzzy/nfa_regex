@@ -13,6 +13,6 @@ mod test {
 
     #[test]
     fn test_parse_by_regex_syntax() {
-        println!("{:?}", parse_by_regex_syntax("123(?:12-)?.*"));
+        println!("{:?}", parse_by_regex_syntax("@(?<region>.+).com"));
     }
 }

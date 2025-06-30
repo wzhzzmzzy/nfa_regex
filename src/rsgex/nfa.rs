@@ -1,4 +1,7 @@
-use std::{collections::VecDeque, rc::Rc};
+use std::{
+    collections::{HashMap, VecDeque},
+    rc::Rc,
+};
 
 #[derive(Clone)]
 pub struct NFAutomata {
@@ -6,6 +9,13 @@ pub struct NFAutomata {
     pub initial: usize,
     pub ending: Vec<usize>,
 }
+
+// left: usize, right: Option<usize>, group_name: Rc<str>
+#[derive(Debug)]
+pub struct CaptureGroupRange(usize, Option<usize>, Option<Rc<str>>);
+
+// char_index: usize, current_state_index: usize, epsilon_mem: Vec<usize>, group_flag: u64
+struct StackFrame(usize, usize, Vec<usize>, u64);
 
 impl NFAutomata {
     pub fn new() -> Self {
@@ -16,15 +26,54 @@ impl NFAutomata {
         }
     }
 
-    pub fn compute(&self, input: &str) -> bool {
-        let mut stack: Vec<(usize, usize, Vec<usize>)> = vec![(0, self.initial, vec![])];
+    pub fn compute(&self, input: &str) -> Option<HashMap<usize, String>> {
+        let mut stack: Vec<StackFrame> = vec![StackFrame(0, self.initial, vec![], 0)];
         let input_chars: Vec<char> = input.chars().collect();
+        let mut group_map: HashMap<usize, CaptureGroupRange> = HashMap::new();
+        let mut captured_group_flag: u64 = 0;
 
-        while let Some((i, current_state_name, epsilon_mem)) = stack.pop() {
-            let current_state = self.states.get(current_state_name).unwrap();
+        while let Some(StackFrame(i, current_state_index, epsilon_mem, mut group_flag)) =
+            stack.pop()
+        {
+            let current_state = self.states.get(current_state_index).unwrap();
+
+            current_state
+                .start_group
+                .iter()
+                .for_each(|(group_index, name)| {
+                    group_flag |= 1 << group_index;
+                    let key = *group_index as usize;
+                    group_map
+                        .entry(key)
+                        .or_insert(CaptureGroupRange(i, None, name.clone()));
+                });
+
+            current_state.end_group.iter().for_each(|(group_index, _)| {
+                if group_flag & 1 << group_index != 0 {
+                    let key = *group_index as usize;
+                    let capture_result = group_map.get_mut(&key).unwrap();
+                    capture_result.1 = Some(i);
+
+                    group_flag &= !(1 << group_index);
+                    captured_group_flag &= 1 << group_index;
+                }
+            });
 
             if current_state.is_ending {
-                return true;
+                // 创建一个新的HashMap来存储捕获组的字符串结果
+                let mut group_captured: HashMap<usize, String> = HashMap::new();
+
+                // 遍历所有捕获组，提取对应的字符串
+                for (group_index, CaptureGroupRange(left, right_opt, _)) in &group_map {
+                    if let Some(right) = right_opt {
+                        // 只处理有完整范围的捕获组
+                        let captured_text: String =
+                            input.chars().skip(*left).take(right - left).collect();
+                        group_captured.insert(*group_index, captured_text);
+                    }
+                }
+
+                return Some(group_captured);
             }
 
             current_state
@@ -43,15 +92,15 @@ impl NFAutomata {
                         if epsilon_mem.iter().all(|name| *name != *to_state_name) {
                             let mut mem = epsilon_mem.clone();
                             mem.push(*to_state_name);
-                            stack.push((i, *to_state_name, mem));
+                            stack.push(StackFrame(i, *to_state_name, mem, group_flag));
                         }
                     } else {
-                        stack.push((i + 1, *to_state_name, vec![]));
+                        stack.push(StackFrame(i + 1, *to_state_name, vec![], group_flag));
                     }
                 });
         }
 
-        false
+        None
     }
 
     pub fn set_initial(&mut self, initial: usize) {
@@ -148,18 +197,60 @@ impl NFAutomata {
             .iter()
             .enumerate()
             .for_each(|(from, state)| {
+                let from_state = if state.is_initial {
+                    union_state
+                } else {
+                    from + origin_len - 1
+                };
+
+                if !state.start_group.is_empty() {
+                    state.start_group.iter().for_each(|group| {
+                        self.mark_start_capture_group(from_state, group.0, group.1.clone());
+                    });
+                }
+
+                if !state.end_group.is_empty() {
+                    state.end_group.iter().for_each(|group| {
+                        self.mark_end_capture_group(from_state, group.0, group.1.clone());
+                    });
+                }
+
                 state.matchers.iter().for_each(|(matcher, to)| {
-                    self.add_transition(
-                        if state.is_initial {
-                            union_state
-                        } else {
-                            from + origin_len - 1
-                        },
-                        (*to) + origin_len - 1,
-                        matcher.clone(),
-                    )
+                    let to_state = (*to) + origin_len - 1;
+
+                    self.add_transition(from_state, to_state, matcher.clone())
                 });
             });
+    }
+
+    pub fn mark_start_capture_group(
+        &mut self,
+        state_index: usize,
+        capture_index: u32,
+        name: Option<Rc<str>>,
+    ) {
+        if let Some(state) = self.states.get_mut(state_index) {
+            state.start_group.push((capture_index, name.clone()));
+        }
+    }
+
+    pub fn mark_end_capture_group(
+        &mut self,
+        state_index: usize,
+        capture_index: u32,
+        name: Option<Rc<str>>,
+    ) {
+        if let Some(state) = self.states.get_mut(state_index) {
+            state.end_group.push((capture_index, name.clone()));
+        }
+    }
+
+    pub fn mark_capture_group(&mut self, index: u32, name: Option<Rc<str>>) {
+        self.mark_start_capture_group(self.initial, index, name.clone());
+
+        self.ending.clone().into_iter().for_each(|i| {
+            self.mark_end_capture_group(i, index, name.clone());
+        });
     }
 
     pub fn debug(&self) {
@@ -180,6 +271,43 @@ impl NFAutomata {
 
             if !markers.is_empty() {
                 state_info.push_str(&format!(" [{}]", markers.join(", ")));
+            }
+
+            // 添加capture group信息
+            let mut capture_info = Vec::new();
+
+            if !state.start_group.is_empty() {
+                let start_groups: Vec<String> = state
+                    .start_group
+                    .iter()
+                    .map(|(index, name)| {
+                        if let Some(name) = name {
+                            format!("START({}:{})", index, name)
+                        } else {
+                            format!("START({})", index)
+                        }
+                    })
+                    .collect();
+                capture_info.extend(start_groups);
+            }
+
+            if !state.end_group.is_empty() {
+                let end_groups: Vec<String> = state
+                    .end_group
+                    .iter()
+                    .map(|(index, name)| {
+                        if let Some(name) = name {
+                            format!("END({}:{})", index, name)
+                        } else {
+                            format!("END({})", index)
+                        }
+                    })
+                    .collect();
+                capture_info.extend(end_groups);
+            }
+
+            if !capture_info.is_empty() {
+                state_info.push_str(&format!(" {{{}}}", capture_info.join(", ")));
             }
 
             // 添加转换关系
@@ -211,6 +339,8 @@ fn create_state() -> State {
         matchers: VecDeque::new(),
         is_initial: false,
         is_ending: false,
+        start_group: Vec::new(),
+        end_group: Vec::new(),
     }
 }
 
@@ -219,6 +349,8 @@ pub struct State {
     pub matchers: VecDeque<(Rc<dyn Matcher>, usize)>,
     pub is_initial: bool,
     pub is_ending: bool,
+    pub start_group: Vec<(u32, Option<Rc<str>>)>,
+    pub end_group: Vec<(u32, Option<Rc<str>>)>,
 }
 
 pub trait Matcher {
@@ -272,10 +404,10 @@ mod tests {
         nfa.add_char_transition(2, 2, 'b');
         nfa.add_epsilon_transition(2, 3);
 
-        assert!(nfa.compute("abbbbbb"));
-        assert!(!nfa.compute("aabbbbbb"));
-        assert!(nfa.compute("ab"));
-        assert!(!nfa.compute("a"));
+        assert!(nfa.compute("abbbbbb").is_some());
+        assert!(nfa.compute("aabbbbbb").is_none());
+        assert!(nfa.compute("ab").is_some());
+        assert!(nfa.compute("a").is_none());
     }
 
     #[test]
@@ -287,6 +419,6 @@ mod tests {
         nfa.add_epsilon_transition(1, 1);
         nfa.add_char_transition(1, 2, 'b');
 
-        assert!(nfa.compute("ab"));
+        assert!(nfa.compute("ab").is_some());
     }
 }
