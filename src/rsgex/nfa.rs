@@ -26,7 +26,7 @@ impl NFAutomata {
         }
     }
 
-    pub fn compute(&self, input: &str) -> Option<HashMap<usize, String>> {
+    pub fn compute(&self, input: &str) -> Option<HashMap<String, String>> {
         let mut stack: Vec<StackFrame> = vec![StackFrame(0, self.initial, vec![], 0)];
         let input_chars: Vec<char> = input.chars().collect();
         let mut group_map: HashMap<usize, CaptureGroupRange> = HashMap::new();
@@ -61,15 +61,19 @@ impl NFAutomata {
 
             if current_state.is_ending {
                 // 创建一个新的HashMap来存储捕获组的字符串结果
-                let mut group_captured: HashMap<usize, String> = HashMap::new();
+                let mut group_captured: HashMap<String, String> = HashMap::new();
 
                 // 遍历所有捕获组，提取对应的字符串
-                for (group_index, CaptureGroupRange(left, right_opt, _)) in &group_map {
+                for (group_index, CaptureGroupRange(left, right_opt, name_opt)) in &group_map {
                     if let Some(right) = right_opt {
                         // 只处理有完整范围的捕获组
                         let captured_text: String =
                             input.chars().skip(*left).take(right - left).collect();
-                        group_captured.insert(*group_index, captured_text);
+                        if let Some(name) = name_opt {
+                            group_captured.insert(name.to_string(), captured_text);
+                        } else {
+                            group_captured.insert(group_index.to_string(), captured_text);
+                        }
                     }
                 }
 

@@ -224,12 +224,24 @@ mod test {
 
         assert_eq!(
             Some("eae"),
-            res.as_ref().unwrap().get(&0).map(|s| s.as_str())
+            res.as_ref()
+                .unwrap()
+                .get(&0.to_string())
+                .map(|s| s.as_str())
         );
         assert_eq!(
             Some("eae"),
-            res.as_ref().unwrap().get(&1).map(|s| s.as_str())
+            res.as_ref()
+                .unwrap()
+                .get(&"all".to_string())
+                .map(|s| s.as_str())
         );
-        assert_eq!(Some("a"), res.as_ref().unwrap().get(&2).map(|s| s.as_str()));
+        assert_eq!(
+            Some("a"),
+            res.as_ref()
+                .unwrap()
+                .get(&2.to_string())
+                .map(|s| s.as_str())
+        );
     }
 }
