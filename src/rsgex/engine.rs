@@ -100,6 +100,7 @@ impl Engine {
             nfa.append(&sub_nfa.nfa, last_sub_nfa_initial);
 
             last_ending = nfa.ending.pop().unwrap();
+            nfa.remove_ending(last_ending);
 
             nfa.fill_state(1);
             let new_ending = nfa.states.len() - 1;
@@ -114,14 +115,14 @@ impl Engine {
 
     fn class(&mut self, class: &Class) {
         let mut nfa = NFAutomata::new();
-        nfa.fill_state(1);
+        nfa.fill_state(3);
         nfa.set_initial(0);
+        nfa.add_epsilon_transition(0, 1);
         if let Class::Unicode(unicode_range) = class {
-            unicode_range.iter().enumerate().for_each(|(i, r)| {
-                nfa.fill_state(1);
+            unicode_range.iter().for_each(|r| {
                 nfa.add_transition(
-                    i,
-                    i + 1,
+                    1,
+                    2,
                     Rc::new(ClassUnicodeMatcher {
                         start: r.start(),
                         end: r.end(),
@@ -130,7 +131,7 @@ impl Engine {
             });
         }
 
-        nfa.add_ending(nfa.states.len() - 1);
+        nfa.add_ending(2);
 
         self.nfa = nfa;
     }
@@ -282,10 +283,17 @@ mod test {
     fn test_class() {
         let e = Engine::try_from("[1-9]+").unwrap();
 
+        println!("{:?}", e.nfa.compute("1"));
         assert_eq!(e.exec("1"), "1");
+        assert_eq!(e.exec("12"), "12");
 
         let e = Engine::try_from("[^1-9]").unwrap();
 
-        assert!(e.nfa.compute("0").is_none());
+        println!("{:?}", e.nfa.compute("0"));
+        assert_eq!(e.exec("0"), "0");
+
+        let e = Engine::try_from("[^1-9]+").unwrap();
+        assert_eq!(e.exec("0"), "0");
+        assert!(e.nfa.compute("1").is_none());
     }
 }
