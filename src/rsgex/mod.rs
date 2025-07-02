@@ -1,3 +1,4 @@
 pub mod engine;
-pub mod nfa;
-pub mod parser;
+mod matcher;
+mod nfa;
+mod parser;
