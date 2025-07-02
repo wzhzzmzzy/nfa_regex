@@ -56,3 +56,31 @@ impl Matcher for EpsilonMatcher {
         "ε".to_string()
     }
 }
+
+pub struct StartOfInputMatcher {}
+impl Matcher for StartOfInputMatcher {
+    fn matches(&self, _s: &[char], i: usize) -> bool {
+        i == 0
+    }
+
+    fn is_epsilon(&self) -> bool {
+        true
+    }
+
+    fn label(&self) -> String {
+        "^".to_string()
+    }
+}
+
+pub struct EndOfInputMatcher {}
+impl Matcher for EndOfInputMatcher {
+    fn matches(&self, s: &[char], i: usize) -> bool {
+        i == s.len()
+    }
+    fn is_epsilon(&self) -> bool {
+        true
+    }
+    fn label(&self) -> String {
+        "$".to_string()
+    }
+}

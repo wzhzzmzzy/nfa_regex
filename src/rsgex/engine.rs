@@ -1,8 +1,12 @@
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
-use super::{matcher::ClassUnicodeMatcher, nfa::NFAutomata, parser};
+use super::{
+    matcher::{ClassUnicodeMatcher, EndOfInputMatcher, EpsilonMatcher, StartOfInputMatcher},
+    nfa::NFAutomata,
+    parser,
+};
 use anyhow::Result;
-use regex_syntax::hir::{Capture, Class, Hir, HirKind, Literal, Repetition};
+use regex_syntax::hir::{Capture, Class, Hir, HirKind, Literal, Look, Repetition};
 
 #[derive(Default)]
 pub struct Engine {
@@ -67,7 +71,9 @@ impl Engine {
         self.nfa = nfa;
     }
 
+    // + / * / {min, max}
     fn repetition(&mut self, repetition: &Repetition) {
+        // nfa: 0
         let mut nfa = NFAutomata::new();
         nfa.fill_state(1);
         nfa.set_initial(0);
@@ -76,12 +82,18 @@ impl Engine {
         let sub_nfa = Self::ast_to_nfa(repetition.sub.kind());
 
         let mut last_sub_nfa_initial: usize;
+        // nfa: 0 -> sub_nfa * min -> end
         for _ in 0..repetition.min {
             last_sub_nfa_initial = nfa.ending.pop().unwrap();
             nfa.remove_ending(last_sub_nfa_initial);
             nfa.append(&sub_nfa.nfa, last_sub_nfa_initial);
         }
 
+        // support {min, (max)}
+        // nfa: 0 -> sub_nfa * min -> end
+        //                         -> sub_nfa -> end
+        //                                    -> sub_nfa -> end
+        //                                    ...
         if let Some(max) = repetition.max {
             let mut sub_nfa_ending: Vec<usize> = vec![];
             for _ in repetition.min..max {
@@ -93,7 +105,13 @@ impl Engine {
             for ending in sub_nfa_ending.into_iter() {
                 nfa.add_epsilon_transition(ending, *nfa.ending.last().unwrap());
             }
-        } else {
+        }
+        // support + / *
+        // last sub_nfa may be repeat or skip
+        // nfa: 0 -> sub_nfa * min-1 -(last_sub_nfa_initial)> sub_nfa -> end_or_back -> end
+        //                                            <(last_sub_nfa_initial)-
+        //                                            -(last_sub_nfa_initial)>
+        else {
             let mut last_ending = nfa.ending.pop().unwrap();
             nfa.remove_ending(last_ending);
             last_sub_nfa_initial = last_ending;
@@ -105,8 +123,17 @@ impl Engine {
             nfa.fill_state(1);
             let new_ending = nfa.states.len() - 1;
             nfa.add_epsilon_transition(last_ending, last_sub_nfa_initial);
-            nfa.add_epsilon_transition(last_ending, new_ending);
-            nfa.add_epsilon_transition(last_sub_nfa_initial, last_ending);
+            if repetition.greedy {
+                nfa.add_epsilon_transition(last_sub_nfa_initial, last_ending);
+                nfa.add_epsilon_transition(last_ending, new_ending);
+            } else {
+                nfa.unshift_transition(
+                    last_sub_nfa_initial,
+                    last_ending,
+                    Rc::new(EpsilonMatcher {}),
+                );
+                nfa.unshift_transition(last_ending, new_ending, Rc::new(EpsilonMatcher {}));
+            }
             nfa.add_ending(new_ending);
         }
 
@@ -147,11 +174,29 @@ impl Engine {
         self.nfa = e.nfa;
     }
 
+    fn look(&mut self, look: &Look) {
+        let mut nfa = NFAutomata::new();
+        nfa.fill_state(2);
+        nfa.set_initial(0);
+        nfa.add_ending(1);
+
+        match look {
+            Look::Start => {
+                nfa.add_transition(0, 1, Rc::new(StartOfInputMatcher {}));
+            }
+            Look::End => {
+                nfa.add_transition(0, 1, Rc::new(EndOfInputMatcher {}));
+            }
+            _ => {
+                nfa.add_epsilon_transition(0, 1);
+            }
+        }
+
+        self.nfa = nfa;
+    }
+
     fn ast_to_nfa(ast: &HirKind) -> Self {
         let mut builder = Self::default();
-        // TODO:
-        // Look: ^ / $
-        // Repetition: greedy +? / *? ...
         match ast {
             HirKind::Alternation(ast_vec) => builder.alternation(ast_vec.as_slice()),
             HirKind::Concat(ast_vec) => builder.concat(ast_vec.as_slice()),
@@ -159,6 +204,7 @@ impl Engine {
             HirKind::Repetition(repetition) => builder.repetition(repetition),
             HirKind::Class(class) => builder.class(class),
             HirKind::Capture(capture) => builder.capture(capture),
+            HirKind::Look(look) => builder.look(look),
             _ => (),
         }
 
@@ -167,13 +213,16 @@ impl Engine {
         builder
     }
 
-    pub fn exec(&self, s: &str) -> String {
-        self.nfa
-            .compute(s)
-            .unwrap()
-            .get(&0.to_string())
-            .unwrap()
-            .clone()
+    pub fn exec(&self, s: &str) -> Option<HashMap<String, String>> {
+        self.nfa.compute(s)
+    }
+
+    pub(crate) fn exec_test(&self, s: &str) -> String {
+        self.exec(s).unwrap().get(&0.to_string()).unwrap().clone()
+    }
+
+    pub fn test(&self, s: &str) -> bool {
+        self.nfa.compute(s).is_some()
     }
 }
 
@@ -223,9 +272,16 @@ mod test {
     fn test_repetition_0_any() {
         let e = Engine::try_from("01*").unwrap();
 
-        assert_eq!(e.exec("0"), "0");
-        assert_eq!(e.exec("01"), "01");
-        assert_eq!(e.exec("011"), "011");
+        assert_eq!(e.exec_test("0"), "0");
+        assert_eq!(e.exec_test("01"), "01");
+        assert_eq!(e.exec_test("011"), "011");
+    }
+
+    #[test]
+    fn test_repetition_lazy() {
+        let e = Engine::try_from("01+?").unwrap();
+
+        assert_eq!(e.exec_test("01111"), "01");
     }
 
     #[test]
@@ -283,17 +339,24 @@ mod test {
     fn test_class() {
         let e = Engine::try_from("[1-9]+").unwrap();
 
-        println!("{:?}", e.nfa.compute("1"));
-        assert_eq!(e.exec("1"), "1");
-        assert_eq!(e.exec("12"), "12");
+        assert_eq!(e.exec_test("1"), "1");
+        assert_eq!(e.exec_test("12"), "12");
 
         let e = Engine::try_from("[^1-9]").unwrap();
 
         println!("{:?}", e.nfa.compute("0"));
-        assert_eq!(e.exec("0"), "0");
+        assert_eq!(e.exec_test("0"), "0");
 
         let e = Engine::try_from("[^1-9]+").unwrap();
-        assert_eq!(e.exec("0"), "0");
+        assert_eq!(e.exec_test("0"), "0");
         assert!(e.nfa.compute("1").is_none());
+    }
+
+    #[test]
+    fn test_look() {
+        let e = Engine::try_from("123$").unwrap();
+
+        assert_eq!(e.exec_test("123"), "123");
+        assert!(e.nfa.compute("1234").is_none());
     }
 }
